@@ -1,4 +1,4 @@
-# WisprLocal
+# Jojowispr
 
 Local voice transcription using [faster-whisper](https://github.com/SYSTRAN/faster-whisper) with GPU acceleration. Push-to-talk dictation that transcribes speech and inserts text into any application — no cloud services required.
 
