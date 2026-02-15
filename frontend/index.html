@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Wispr Local Frontend</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="layout">
+      <section class="card">
+        <h1>Wispr Local Frontend</h1>
+        <p class="muted">
+          Frontend local (Mac) qui enregistre ton micro et envoie au backend distant.
+        </p>
+
+        <label for="endpoint">Endpoint</label>
+        <input
+          id="endpoint"
+          type="text"
+          value="https://your-server.example.com/transcribe"
+        />
+
+        <label for="apiKey">API key</label>
+        <input id="apiKey" type="password" />
+
+        <label for="language">Langue</label>
+        <select id="language">
+          <option value="">Auto</option>
+          <option value="fr" selected>fr</option>
+          <option value="en">en</option>
+          <option value="es">es</option>
+        </select>
+
+        <div class="row-inline">
+          <label class="inline">
+            <input id="live" type="checkbox" checked />
+            Live (beta)
+          </label>
+          <label class="inline">
+            Update (ms)
+            <input id="liveInterval" type="number" min="500" step="100" value="1200" />
+          </label>
+        </div>
+
+        <label for="device">Microphone</label>
+        <select id="device"></select>
+
+        <div class="actions">
+          <button id="start" class="primary">Start</button>
+          <button id="stop" class="danger" disabled>Stop + Transcribe</button>
+        </div>
+
+        <p id="status" class="muted">Prêt.</p>
+        <textarea id="result" rows="8" placeholder="Résultat transcription..."></textarea>
+      </section>
+    </main>
+
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>
