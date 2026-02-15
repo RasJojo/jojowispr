@@ -126,6 +126,47 @@ textarea {
   resize: vertical;
 }
 
+.debug {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.debug > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.debug-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.debug-actions button {
+  width: auto;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.debug-log {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #0b1220;
+  color: #e2e8f0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.35;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
 @media (max-width: 640px) {
   .actions {
     grid-template-columns: 1fr;

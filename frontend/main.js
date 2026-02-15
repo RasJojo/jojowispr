@@ -8,6 +8,9 @@ const startBtn = document.getElementById("start");
 const stopBtn = document.getElementById("stop");
 const resultEl = document.getElementById("result");
 const statusEl = document.getElementById("status");
+const debugLogEl = document.getElementById("debugLog");
+const debugCopyBtn = document.getElementById("debugCopy");
+const debugClearBtn = document.getElementById("debugClear");
 
 const STORAGE_KEY = "wispr_local_frontend";
 
@@ -17,6 +20,40 @@ let chunks = [];
 let liveTimer = null;
 let inFlight = false;
 let lastSentChunkCount = 0;
+
+function dbg(line) {
+  const ts = new Date().toLocaleTimeString();
+  const text = `[${ts}] ${line}`;
+  if (debugLogEl) {
+    debugLogEl.textContent = (debugLogEl.textContent ? debugLogEl.textContent + "\n" : "") + text;
+    debugLogEl.scrollTop = debugLogEl.scrollHeight;
+  }
+  // Still useful when devtools are open.
+  console.debug(text);
+}
+
+debugCopyBtn?.addEventListener("click", async () => {
+  const text = debugLogEl?.textContent || "";
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    dbg("Debug log copied to clipboard.");
+  } catch {
+    dbg("Failed to copy debug log (clipboard permission?).");
+  }
+});
+
+debugClearBtn?.addEventListener("click", () => {
+  if (debugLogEl) debugLogEl.textContent = "";
+});
+
+window.addEventListener("error", (e) => {
+  dbg(`window.error: ${e.message}`);
+});
+window.addEventListener("unhandledrejection", (e) => {
+  const msg = e?.reason?.message || String(e.reason || "unknown");
+  dbg(`unhandledrejection: ${msg}`);
+});
 
 function setStatus(text) {
   statusEl.textContent = text;
@@ -74,8 +111,10 @@ async function loadMicrophones() {
       opt.textContent = "Aucun micro detecte";
       deviceEl.appendChild(opt);
     }
+    dbg(`Loaded microphones: ${mics.length}`);
   } catch (err) {
     setStatus(`Erreur micro: ${err.message}`);
+    dbg(`Micro error: ${err.message}`);
   }
 }
 
@@ -102,16 +141,37 @@ async function transcribeBlob(audioBlob, blobType) {
   form.append("file", audioBlob, `recording.${ext}`);
   const url = language ? `${endpoint}?language=${encodeURIComponent(language)}&task=transcribe` : `${endpoint}?task=transcribe`;
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: apiKey ? { "X-API-Key": apiKey } : {},
-    body: form,
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload.detail || `HTTP ${response.status}`);
+  const controller = new AbortController();
+  const timeoutMs = 20_000;
+  const t0 = performance.now();
+
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    dbg(`POST ${url} bytes=${audioBlob.size} type=${blobType} apiKeySet=${!!apiKey} lang=${language || "auto"}`);
+    const response = await fetch(url, {
+      method: "POST",
+      headers: apiKey ? { "X-API-Key": apiKey } : {},
+      body: form,
+      signal: controller.signal,
+    });
+    const payload = await response.json().catch(() => ({}));
+    const dt = Math.round(performance.now() - t0);
+    dbg(`Response status=${response.status} dt=${dt}ms elapsed_ms=${payload.elapsed_ms ?? "?"}`);
+    if (!response.ok) {
+      throw new Error(payload.detail || `HTTP ${response.status}`);
+    }
+    return payload;
+  } catch (err) {
+    const dt = Math.round(performance.now() - t0);
+    if (err?.name === "AbortError") {
+      dbg(`Fetch timeout after ${dt}ms`);
+      throw new Error(`Timeout (${timeoutMs}ms)`);
+    }
+    dbg(`Fetch error after ${dt}ms: ${err.message || String(err)}`);
+    throw err;
+  } finally {
+    clearTimeout(timeout);
   }
-  return payload;
 }
 
 function startLiveLoop() {
@@ -165,9 +225,11 @@ async function startRecording() {
     startBtn.disabled = true;
     stopBtn.disabled = false;
     setStatus("Enregistrement...");
+    dbg(`Recording started mime=${mimeType || recorder.mimeType || "default"} deviceId=${deviceId ? "custom" : "default"}`);
     startLiveLoop();
   } catch (err) {
     setStatus(`Erreur start: ${err.message}`);
+    dbg(`Start error: ${err.message}`);
   }
 }
 
@@ -191,11 +253,13 @@ async function stopRecording() {
 
   if (!chunks.length) {
     setStatus("Aucun audio capture.");
+    dbg("Stop: no chunks captured");
     return;
   }
 
   const blobType = chunks[0]?.type || "audio/webm";
   const blob = new Blob(chunks, { type: blobType });
+  dbg(`Stop: chunks=${chunks.length} bytes=${blob.size} type=${blobType}`);
 
   setStatus("Transcription...");
   try {

@@ -1,59 +1,83 @@
-# jojowispr
+# WisprLocal
 
-Transcription vocale locale utilisant [faster-whisper](https://github.com/SYSTRAN/faster-whisper) avec accélération GPU.
+Local voice transcription using [faster-whisper](https://github.com/SYSTRAN/faster-whisper) with GPU acceleration. Push-to-talk dictation that transcribes speech and inserts text into any application — no cloud services required.
 
 ## Architecture
 
 ```
-┌──────────────────────┐
-│  Backend (FastAPI)   │  Docker + NVIDIA CUDA
-│  faster-whisper GPU  │  Port 8010
-└──────────┬───────────┘
-           │ POST /transcribe
-     ┌─────┴─────┐
-     │           │
-  Frontend    Client Mac
-  (Web/Vite)  (Push-to-talk)
+┌──────────────────────────┐
+│   Backend (FastAPI)      │  Docker + NVIDIA CUDA
+│   faster-whisper GPU     │  Port 8010
+└────────────┬─────────────┘
+             │ POST /transcribe
+      ┌──────┼──────┐
+      │      │      │
+   macOS   Client  Frontend
+   App     Mac     (Web)
+  (Swift)  (CLI)   (Vite)
 ```
 
-- **backend/** — API de transcription (FastAPI + faster-whisper)
-- **frontend/** — Interface web pour tester (Vite, vanilla JS)
-- **client-mac/** — Client macOS push-to-talk, colle le texte directement
+- **backend/** — Transcription API (FastAPI + faster-whisper)
+- **macos/** — Native macOS menu bar app (SwiftUI, push-to-talk with overlay)
+- **client-mac/** — Python CLI push-to-talk client
+- **frontend/** — Web interface for testing
+- **scripts/** — Build, install and debug helper scripts for the macOS app
 
-## Prérequis
+## Prerequisites
 
-- Docker avec support NVIDIA GPU ([nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html))
-- Python 3.9+ (pour le client Mac)
-- Node.js (pour le frontend)
+- Docker with NVIDIA GPU support ([nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html))
+- Xcode (for the macOS app)
+- Python 3.9+ (for the CLI client)
+- Node.js (for the web frontend)
 
 ## Installation
 
-### 1. Backend (serveur GPU)
+### 1. Backend (GPU server)
 
 ```bash
 cp .env.example .env
-# Éditer .env avec ta clé API et tes préférences
+# Edit .env with your API key and preferences
 
 docker compose -f docker-compose.server.yml up -d --build
 ```
 
-Vérifier que ça tourne :
+Check that it's running:
 
 ```bash
 curl http://localhost:8010/health
 ```
 
-### 2. Frontend web
+### 2. macOS app (recommended)
+
+A native menu bar app is available in `macos/WisprLocal/`. The fastest way to install it:
 
 ```bash
-cd frontend
-npm install
-npm run dev
+./scripts/macos_install_release.sh
 ```
 
-Ouvrir http://localhost:5173, configurer l'endpoint `http://<IP_SERVEUR>:8010/transcribe` et la clé API.
+The script will:
+- Build the app in Release mode
+- Prompt for server URL, language, and API key
+- Store the API key in Keychain
+- Codesign and install to `/Applications`
+- Open macOS privacy settings for Microphone and Accessibility permissions
 
-### 3. Client Mac (push-to-talk)
+Alternatively, open `macos/WisprLocal/WisprLocal.xcodeproj` in Xcode and build manually.
+
+**Default hotkeys:**
+- Hold-to-talk: `⌥ Space`
+- Toggle dictation: `⌥ ⇧ Space`
+
+**Settings** (accessible from the menu bar icon):
+- Server URL and API key
+- Language (auto-detect, fr, en, es, de, it)
+- Insertion mode (type or paste)
+- Pause media while dictating
+- Smart formatting (voice punctuation commands)
+
+> Note: the "Pause media" option uses the private MediaRemote framework — this build is for personal use (not App Store compatible).
+
+### 3. CLI client (alternative)
 
 ```bash
 cd client-mac
@@ -61,40 +85,59 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-python wispr_client.py --api-key "ta-cle" --language fr
+python wispr_client.py --api-key "your-key" --language fr
 ```
 
-Maintenir **F8** pour parler, relâcher pour transcrire et coller.
-
-Options utiles :
+Hold **F8** to talk, release to transcribe and paste.
 
 ```bash
+# Options
 python wispr_client.py --hotkey f9 --dry-run --server-url http://192.168.1.100:8010/transcribe
 ```
+
+### 4. Web frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open http://localhost:5173, set the endpoint to `http://<SERVER_IP>:8010/transcribe` and the API key.
 
 ## API
 
 ### `GET /health`
 
-Retourne le statut et la config du modèle.
+Returns model status and device config.
 
 ### `POST /transcribe`
 
-| Paramètre | Type | Description |
+| Parameter | Type | Description |
 |-----------|------|-------------|
-| `file` | form-data | Fichier audio (wav, webm, etc.) |
-| `language` | query | Langue forcée (optionnel) |
-| `task` | query | `transcribe` ou `translate` |
-| `X-API-Key` | header | Clé API (si configurée) |
+| `file` | form-data | Audio file (wav, webm, etc.) |
+| `language` | query | Force language (optional) |
+| `task` | query | `transcribe` or `translate` |
+| `X-API-Key` | header | API key (if configured) |
 
 ## Configuration (.env)
 
-| Variable | Défaut | Description |
-|----------|--------|-------------|
-| `WISPR_PORT` | `8010` | Port exposé |
-| `MODEL_SIZE` | `large-v3` | Modèle Whisper |
-| `WHISPER_DEVICE` | `cuda` | `cuda` ou `cpu` |
-| `WHISPER_COMPUTE_TYPE` | `float16` | Précision GPU |
-| `WHISPER_BEAM_SIZE` | `1` | Beam size (1 = rapide) |
-| `WHISPER_VAD_FILTER` | `true` | Filtre d'activité vocale |
-| `WISPR_API_KEY` | — | Clé d'authentification |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WISPR_PORT` | `8010` | Exposed port |
+| `MODEL_SIZE` | `large-v3` | Whisper model |
+| `WHISPER_DEVICE` | `cuda` | `cuda` or `cpu` |
+| `WHISPER_COMPUTE_TYPE` | `float16` | GPU precision |
+| `WHISPER_BEAM_SIZE` | `1` | Beam size (1 = fast) |
+| `WHISPER_VAD_FILTER` | `true` | Voice activity filter |
+| `WISPR_API_KEY` | — | Authentication key |
+
+## Helper scripts
+
+| Script | Description |
+|--------|-------------|
+| `scripts/macos_install_release.sh` | Build, sign, and install the macOS app |
+| `scripts/macos_setup_and_run.sh` | Dev setup and run |
+| `scripts/macos_show_wispr_logs.sh` | Stream app logs |
+| `scripts/macos_capture_wispr_debug.sh` | Capture debug info |
+| `scripts/macos_reset_accessibility.sh` | Reset accessibility permissions |

@@ -13,6 +13,9 @@ __pycache__/
 # Logs
 *.log
 
+# Build
+build/
+
 # OS
 .DS_Store
 Thumbs.db
@@ -27,3 +30,10 @@ dist/
 # IDE
 .vscode/
 .idea/
+.claude/
+
+# Xcode
+DerivedData/
+*.xcworkspace/
+*.xcuserstate
+xcuserdata/
