@@ -18,7 +18,7 @@ struct MenuView: View {
             Divider()
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Server: \(model.settings.serverURL)")
+                Text("Model: \(URL(fileURLWithPath: model.settings.modelPath).lastPathComponent)")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)

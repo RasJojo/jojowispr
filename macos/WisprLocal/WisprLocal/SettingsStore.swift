@@ -9,8 +9,16 @@ final class SettingsStore: ObservableObject {
     @Published var lastMetrics: DictationMetrics?
     @Published var debugStatus: String = ""
 
-    @Published var serverURL: String {
-        didSet { UserDefaults.standard.set(serverURL, forKey: Keys.serverURL) }
+    @Published var modelPath: String {
+        didSet { UserDefaults.standard.set(modelPath, forKey: Keys.modelPath) }
+    }
+
+    @Published var whisperBinaryPath: String {
+        didSet { UserDefaults.standard.set(whisperBinaryPath, forKey: Keys.whisperBinaryPath) }
+    }
+
+    @Published var transcriptionTimeoutSeconds: Double {
+        didSet { UserDefaults.standard.set(transcriptionTimeoutSeconds, forKey: Keys.transcriptionTimeoutSeconds) }
     }
 
     /// Empty string = auto
@@ -48,15 +56,12 @@ final class SettingsStore: ObservableObject {
         }
     }
 
-    var apiKey: String {
-        get { (try? Keychain.getString(service: Keys.keychainService, account: Keys.keychainAccount)) ?? "" }
-        set { try? Keychain.setString(newValue, service: Keys.keychainService, account: Keys.keychainAccount) }
-    }
-
     init() {
         let defaults = UserDefaults.standard
 
-        self.serverURL = defaults.string(forKey: Keys.serverURL) ?? "https://your-server.example.com/transcribe"
+        self.modelPath = defaults.string(forKey: Keys.modelPath) ?? TranscriptionClient.preferredModelPath()
+        self.whisperBinaryPath = defaults.string(forKey: Keys.whisperBinaryPath) ?? ""
+        self.transcriptionTimeoutSeconds = defaults.object(forKey: Keys.transcriptionTimeoutSeconds) as? Double ?? 90
         self.language = defaults.string(forKey: Keys.language) ?? ""
         self.pauseMediaWhileDictating = defaults.object(forKey: Keys.pauseMediaWhileDictating) as? Bool ?? true
         self.playSounds = defaults.object(forKey: Keys.playSounds) as? Bool ?? true
@@ -98,7 +103,9 @@ final class SettingsStore: ObservableObject {
     }
 
     private enum Keys {
-        static let serverURL = "wispr.server_url"
+        static let modelPath = "wispr.local_model_path"
+        static let whisperBinaryPath = "wispr.whisper_binary_path"
+        static let transcriptionTimeoutSeconds = "wispr.transcription_timeout_s"
         static let language = "wispr.language"
         static let pauseMediaWhileDictating = "wispr.pause_media"
         static let playSounds = "wispr.play_sounds"
@@ -107,9 +114,6 @@ final class SettingsStore: ObservableObject {
 
         static let holdPrefix = "wispr.hotkey.hold."
         static let togglePrefix = "wispr.hotkey.toggle."
-
-        static let keychainService = "WisprLocal"
-        static let keychainAccount = "apiKey"
     }
 }
 

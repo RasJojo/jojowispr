@@ -57,9 +57,15 @@ final class AppModel: ObservableObject {
             self?.hotkeys.register(hold: hold, toggle: toggle)
         }
 
-        // First-run: prompt settings if the API key isn't set.
-        if settings.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            showSettings()
+        // If a previously saved path is stale (e.g. after app updates), fall back to current preferred model.
+        if !FileManager.default.fileExists(atPath: settings.modelPath) {
+            let fallback = TranscriptionClient.preferredModelPath()
+            if FileManager.default.fileExists(atPath: fallback) {
+                settings.modelPath = fallback
+            } else {
+                // First-run: prompt settings if no model is available yet.
+                showSettings()
+            }
         }
     }
 

@@ -3,22 +3,49 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var settings: SettingsStore
-    @State private var apiKeyDraft: String = ""
+    @State private var modelInstallStatus: String = ""
+    @State private var isInstallingModel = false
 
     var body: some View {
         Form {
-            Section("Backend") {
-                TextField("Server URL", text: $settings.serverURL)
+            Section("Local Transcription") {
+                TextField("Model path (.bin/.gguf)", text: $settings.modelPath)
                     .textFieldStyle(.roundedBorder)
 
                 HStack {
-                    SecureField("API key (Keychain)", text: $apiKeyDraft)
+                    TextField("Whisper binary path (optional)", text: $settings.whisperBinaryPath)
                         .textFieldStyle(.roundedBorder)
-                    Button("Save") {
-                        settings.apiKey = apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-                        apiKeyDraft = settings.apiKey
+
+                    Button("Auto") {
+                        settings.whisperBinaryPath = ""
                     }
-                    .keyboardShortcut(.defaultAction)
+                }
+
+                HStack {
+                    Stepper(value: $settings.transcriptionTimeoutSeconds, in: 10...300, step: 5) {
+                        Text("Timeout: \(Int(settings.transcriptionTimeoutSeconds))s")
+                    }
+                    Spacer()
+                }
+
+                HStack {
+                    Button("Use Defaults") {
+                        settings.modelPath = TranscriptionClient.preferredModelPath()
+                        settings.whisperBinaryPath = ""
+                    }
+                    Button(isInstallingModel ? "Installing..." : "Install Default Model") {
+                        installDefaultModel()
+                    }
+                    .disabled(isInstallingModel)
+                    Button("Open Model Folder") {
+                        openModelFolder()
+                    }
+                }
+
+                if !modelInstallStatus.isEmpty {
+                    Text(modelInstallStatus)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
                 }
 
                 Picker("Language", selection: $settings.language) {
@@ -30,6 +57,10 @@ struct SettingsView: View {
                     Text("it").tag("it")
                 }
                 .pickerStyle(.segmented)
+
+                Text("Binary lookup order: custom path, bundled whisper-cli, then PATH.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
             }
 
             Section("Hotkeys") {
@@ -104,8 +135,8 @@ struct SettingsView: View {
                             .font(.system(.body, design: .monospaced))
                             .foregroundStyle(.secondary)
                     }
-                    LabeledContent("Request") {
-                        Text("\(m.requestMs)ms (srv \(m.serverElapsedMs ?? -1)ms)")
+                    LabeledContent("Local run") {
+                        Text("\(m.requestMs)ms (engine \(m.serverElapsedMs ?? -1)ms)")
                             .font(.system(.body, design: .monospaced))
                             .foregroundStyle(.secondary)
                     }
@@ -129,9 +160,6 @@ struct SettingsView: View {
             }
         }
         .padding(16)
-        .onAppear {
-            apiKeyDraft = settings.apiKey
-        }
     }
 
     private static func formatBytes(_ bytes: Int64) -> String {
@@ -144,6 +172,32 @@ struct SettingsView: View {
         }
         if idx == 0 { return "\(Int(value)) \(units[idx])" }
         return String(format: "%.1f %@", value, units[idx])
+    }
+
+    private func installDefaultModel() {
+        isInstallingModel = true
+        modelInstallStatus = "Downloading model..."
+        Task { @MainActor in
+            do {
+                let url = try await TranscriptionClient.installDefaultModel(at: settings.modelPath)
+                modelInstallStatus = "Model installed: \(url.path)"
+            } catch {
+                modelInstallStatus = "Install failed: \(error.localizedDescription)"
+            }
+            isInstallingModel = false
+        }
+    }
+
+    private func openModelFolder() {
+        let modelPath = settings.modelPath.isEmpty ? TranscriptionClient.defaultModelPath() : settings.modelPath
+        let folder = URL(fileURLWithPath: NSString(string: modelPath).expandingTildeInPath).deletingLastPathComponent()
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        } catch {
+            modelInstallStatus = "Unable to create folder: \(error.localizedDescription)"
+            return
+        }
+        NSWorkspace.shared.open(folder)
     }
 }
 

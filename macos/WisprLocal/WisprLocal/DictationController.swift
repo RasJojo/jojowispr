@@ -113,15 +113,18 @@ final class DictationController: ObservableObject {
 
             state = .transcribing
             overlay.show(mode: .transcribing)
-            settings.debugStatus = String(format: "Sending audio (%.1fs, %@)...", audioDuration, Self.formatBytes(fileBytes))
+            settings.debugStatus = String(format: "Running local model (%.1fs, %@)...", audioDuration, Self.formatBytes(fileBytes))
 
-            Log.network.info("Transcribe request starting server=\(settings.serverURL, privacy: .public) language=\(settings.language, privacy: .public) apiKeySet=\(!settings.apiKey.isEmpty, privacy: .public)")
+            Log.network.info(
+                "Local transcribe request starting model=\(settings.modelPath, privacy: .public) language=\(settings.language, privacy: .public)"
+            )
             let requestStarted = CFAbsoluteTimeGetCurrent()
             let result = try await transcription.transcribe(
                 audioFileURL: audioURL,
-                serverURLString: settings.serverURL,
-                apiKey: settings.apiKey.isEmpty ? nil : settings.apiKey,
-                language: settings.language.isEmpty ? nil : settings.language
+                modelPath: settings.modelPath,
+                whisperBinaryPath: settings.whisperBinaryPath,
+                language: settings.language.isEmpty ? nil : settings.language,
+                timeoutSeconds: settings.transcriptionTimeoutSeconds
             )
             let requestMs = Int((CFAbsoluteTimeGetCurrent() - requestStarted) * 1000)
             let totalMs = lastStopRecorderMs + requestMs
@@ -137,7 +140,7 @@ final class DictationController: ObservableObject {
                 languageProbability: result.language_probability
             )
             settings.debugStatus = "Inserting text..."
-            Log.network.info("Transcribe response ok requestMs=\(requestMs, privacy: .public) serverElapsedMs=\(result.elapsed_ms ?? -1, privacy: .public) lang=\(result.language ?? "?", privacy: .public) textChars=\(result.text.count, privacy: .public)")
+            Log.network.info("Local transcribe response ok requestMs=\(requestMs, privacy: .public) engineElapsedMs=\(result.elapsed_ms ?? -1, privacy: .public) lang=\(result.language ?? "?", privacy: .public) textChars=\(result.text.count, privacy: .public)")
 
             var text = result.text
             if settings.smartFormatting {
@@ -151,8 +154,8 @@ final class DictationController: ObservableObject {
                 if ok {
                     if totalMs >= 2500 {
                         let audioS = String(format: "%.1fs", audioDuration)
-                        let srv = result.elapsed_ms.map { "\($0)ms" } ?? "?"
-                        overlay.flash(message: "Inserted • audio \(audioS) • total \(totalMs)ms • srv \(srv)")
+                        let engine = result.elapsed_ms.map { "\($0)ms" } ?? "?"
+                        overlay.flash(message: "Inserted • audio \(audioS) • total \(totalMs)ms • local \(engine)")
                     } else {
                         overlay.flash(message: "Inserted")
                     }

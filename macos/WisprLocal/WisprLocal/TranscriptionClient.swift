@@ -9,232 +9,310 @@ struct TranscriptionResult: Decodable, Sendable {
 
 struct TranscriptionClient: Sendable {
     enum ClientError: Error, LocalizedError {
-        case invalidURL
-        case invalidResponse
-        case httpError(Int, String)
+        case missingWhisperCLI
+        case missingModel(String)
+        case processFailed(String)
         case timeout
-        case curlFailed(String)
 
         var errorDescription: String? {
             switch self {
-            case .invalidURL:
-                return "Invalid server URL."
-            case .invalidResponse:
-                return "Invalid server response."
-            case let .httpError(code, message):
-                return "HTTP \(code): \(message)"
+            case .missingWhisperCLI:
+                return "whisper-cli not found. Set its path in Settings, or bundle whisper-cli in the app."
+            case let .missingModel(path):
+                return "Model not found at '\(path)'. Install/download a Whisper model first."
+            case let .processFailed(message):
+                return "Local transcription failed: \(message)"
             case .timeout:
-                return "Request timed out."
-            case let .curlFailed(message):
-                return "curl failed: \(message)"
+                return "Local transcription timed out."
             }
         }
+    }
+
+    enum InstallError: Error, LocalizedError {
+        case badResponse
+        case httpError(Int)
+
+        var errorDescription: String? {
+            switch self {
+            case .badResponse:
+                return "Model download failed: invalid server response."
+            case let .httpError(code):
+                return "Model download failed with HTTP \(code)."
+            }
+        }
+    }
+
+    static let defaultModelFileName = "ggml-large-v3-turbo.bin"
+    static let defaultModelDownloadURL = URL(
+        string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin"
+    )!
+
+    static func bundledModelPath() -> String? {
+        guard let resources = Bundle.main.resourceURL else { return nil }
+
+        let preferred = resources
+            .appendingPathComponent("Models", isDirectory: true)
+            .appendingPathComponent(defaultModelFileName)
+        if FileManager.default.fileExists(atPath: preferred.path) {
+            return preferred.path
+        }
+
+        let modelsDir = resources.appendingPathComponent("Models", isDirectory: true)
+        if let entries = try? FileManager.default.contentsOfDirectory(
+            at: modelsDir,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) {
+            if let firstModel = entries.first(where: { ["bin", "gguf"].contains($0.pathExtension.lowercased()) }) {
+                return firstModel.path
+            }
+        }
+        return nil
+    }
+
+    static func preferredModelPath() -> String {
+        bundledModelPath() ?? defaultModelPath()
+    }
+
+    static func defaultModelPath() -> String {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
+        return appSupport
+            .appendingPathComponent("WisprLocal", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
+            .appendingPathComponent(defaultModelFileName)
+            .path
+    }
+
+    static func installDefaultModel(at destinationPath: String) async throws -> URL {
+        let requestedPath = destinationPath.isEmpty ? defaultModelPath() : destinationPath
+        var finalPath = expandPath(requestedPath)
+        // App bundle resources are read-only at runtime: redirect installs to Application Support.
+        if finalPath.hasPrefix(Bundle.main.bundlePath) {
+            finalPath = defaultModelPath()
+        }
+        let destination = URL(fileURLWithPath: finalPath)
+        try FileManager.default.createDirectory(
+            at: destination.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+
+        let (tempFile, response) = try await URLSession.shared.download(from: defaultModelDownloadURL)
+        guard let http = response as? HTTPURLResponse else {
+            throw InstallError.badResponse
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw InstallError.httpError(http.statusCode)
+        }
+
+        let fm = FileManager.default
+        if fm.fileExists(atPath: destination.path) {
+            try fm.removeItem(at: destination)
+        }
+        try fm.moveItem(at: tempFile, to: destination)
+
+        return destination
     }
 
     func transcribe(
         audioFileURL: URL,
-        serverURLString: String,
-        apiKey: String?,
-        language: String?
+        modelPath: String,
+        whisperBinaryPath: String,
+        language: String?,
+        timeoutSeconds: Double
     ) async throws -> TranscriptionResult {
-        guard var components = URLComponents(string: serverURLString) else {
-            throw ClientError.invalidURL
+        guard let executable = Self.resolveWhisperExecutable(configuredPath: whisperBinaryPath) else {
+            throw ClientError.missingWhisperCLI
+        }
+        let resolvedModelPath = Self.expandPath(modelPath.isEmpty ? Self.preferredModelPath() : modelPath)
+        guard FileManager.default.fileExists(atPath: resolvedModelPath) else {
+            throw ClientError.missingModel(resolvedModelPath)
         }
 
-        var query = components.queryItems ?? []
-        query.append(URLQueryItem(name: "task", value: "transcribe"))
-        if let language, !language.isEmpty {
-            query.append(URLQueryItem(name: "language", value: language))
-        }
-        components.queryItems = query
+        let languageArg = Self.normalizeLanguage(language)
+        let outputPrefix = FileManager.default.temporaryDirectory
+            .appendingPathComponent("wispr_transcript_\(UUID().uuidString)")
+        let outputTextURL = URL(fileURLWithPath: outputPrefix.path + ".txt")
 
-        guard let url = components.url else { throw ClientError.invalidURL }
+        let args = [
+            "-m", resolvedModelPath,
+            "-f", audioFileURL.path,
+            "-l", languageArg,
+            "-otxt",
+            "-of", outputPrefix.path,
+            "-np",
+        ]
 
         let fileBytes = (try? FileManager.default.attributesOfItem(atPath: audioFileURL.path)[.size] as? NSNumber)?.int64Value ?? 0
-        Log.network.info("TranscriptionClient.transcribe url=\(url.absoluteString, privacy: .public) bytes=\(fileBytes, privacy: .public)")
+        Log.network.info(
+            "Local transcribe starting binary=\(executable, privacy: .public) model=\(resolvedModelPath, privacy: .public) lang=\(languageArg, privacy: .public) bytes=\(fileBytes, privacy: .public)"
+        )
 
-        let boundary = "Boundary-\(UUID().uuidString)"
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        // URLSession + HTTP/3 (QUIC) can sometimes hang behind certain networks/Cloudflare setups.
-        // We'll try URLSession first with a short timeout, then fall back to curl (TCP) if needed.
-        req.timeoutInterval = 30
-        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        req.setValue("application/json", forHTTPHeaderField: "Accept")
-        if let apiKey, !apiKey.isEmpty {
-            req.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
-        }
-
-        let audioData = try Data(contentsOf: audioFileURL)
-        req.httpBody = makeMultipartBody(boundary: boundary, fileData: audioData, filename: audioFileURL.lastPathComponent)
-        let request = req
-
-        do {
-            // Backend is usually sub-second; if URLSession hangs (often HTTP/3/QUIC), fall back fast.
-            return try await withTimeout(seconds: 4) {
-                try await transcribeViaURLSession(request: request)
-            }
-        } catch {
-            Log.network.error("URLSession attempt failed: \(String(describing: error), privacy: .public). Falling back to curl.")
-            // If we got an HTTP response from the server, don't retry with curl.
-            if case ClientError.httpError = error {
-                throw error
-            }
-            if case ClientError.invalidResponse = error {
-                throw error
-            }
-            // Otherwise, retry via curl (forces HTTP/2/TCP, avoids flaky HTTP/3 paths).
-            return try await transcribeViaCurl(url: url, apiKey: apiKey, audioFileURL: audioFileURL)
-        }
-    }
-
-    private func transcribeViaURLSession(request: URLRequest) async throws -> TranscriptionResult {
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 30
-        config.timeoutIntervalForResource = 30
-        config.waitsForConnectivity = false
-
-        let session = URLSession(configuration: config)
         let started = CFAbsoluteTimeGetCurrent()
-        do {
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                throw ClientError.invalidResponse
-            }
-
-            if http.statusCode < 200 || http.statusCode >= 300 {
-                let message = Self.extractErrorMessage(from: data) ?? String(data: data, encoding: .utf8) ?? "Request failed"
-                throw ClientError.httpError(http.statusCode, message)
-            }
-
-            let ms = Int((CFAbsoluteTimeGetCurrent() - started) * 1000)
-            Log.network.info("URLSession ok status=\(http.statusCode, privacy: .public) ms=\(ms, privacy: .public) bytes=\(data.count, privacy: .public)")
-            return try JSONDecoder().decode(TranscriptionResult.self, from: data)
-        } catch {
-            if let urlError = error as? URLError, urlError.code == .timedOut {
-                throw ClientError.timeout
-            }
-            throw error
-        }
-    }
-
-    private func transcribeViaCurl(url: URL, apiKey: String?, audioFileURL: URL) async throws -> TranscriptionResult {
-        Log.network.info("curl fallback starting url=\(url.absoluteString, privacy: .public)")
-        let marker = "__WISPR_HTTP_CODE__:"
-        let markerPrefix = "\n\(marker)"
-        let format = "\(markerPrefix)%{http_code}\n"
-
-        let responseData: Data = try await Task.detached(priority: .userInitiated) {
-            let started = CFAbsoluteTimeGetCurrent()
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
-
-            var args: [String] = [
-                "-sS",
-                "--http2",
-                "--connect-timeout", "10",
-                "--max-time", "30",
-                "-H", "Accept: application/json",
-            ]
-            if let apiKey, !apiKey.isEmpty {
-                args += ["-H", "X-API-Key: \(apiKey)"]
-            }
-            args += [
-                "-F", "file=@\(audioFileURL.path)",
-                "-w", format,
-                url.absoluteString,
-            ]
-            process.arguments = args
-
-            let out = Pipe()
-            let err = Pipe()
-            process.standardOutput = out
-            process.standardError = err
-
-            try process.run()
-            process.waitUntilExit()
-
-            let stdoutData = out.fileHandleForReading.readDataToEndOfFile()
-            let stderrData = err.fileHandleForReading.readDataToEndOfFile()
-
-            if process.terminationStatus != 0 {
-                let msg = String(data: stderrData, encoding: .utf8) ?? "exit \(process.terminationStatus)"
-                throw ClientError.curlFailed(msg.trimmingCharacters(in: .whitespacesAndNewlines))
-            }
-
-            let ms = Int((CFAbsoluteTimeGetCurrent() - started) * 1000)
-            Log.network.info("curl ok ms=\(ms, privacy: .public) bytes=\(stdoutData.count, privacy: .public)")
-            return stdoutData
+        let processOutput: ProcessOutput = try await Task.detached(priority: .userInitiated) {
+            try Self.runWhisperProcess(
+                executablePath: executable,
+                arguments: args,
+                timeoutSeconds: timeoutSeconds
+            )
         }.value
+        let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - started) * 1000)
 
-        guard let raw = String(data: responseData, encoding: .utf8) else {
-            throw ClientError.invalidResponse
+        if processOutput.exitCode != 0 {
+            let stderrTrimmed = processOutput.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            throw ClientError.processFailed(
+                stderrTrimmed.isEmpty ? "exit code \(processOutput.exitCode)" : stderrTrimmed
+            )
         }
 
-        guard let range = raw.range(of: markerPrefix) else {
-            throw ClientError.invalidResponse
+        let textRaw: String
+        if FileManager.default.fileExists(atPath: outputTextURL.path) {
+            textRaw = (try? String(contentsOf: outputTextURL, encoding: .utf8)) ?? ""
+            try? FileManager.default.removeItem(at: outputTextURL)
+        } else {
+            textRaw = processOutput.stdout
         }
 
-        let bodyString = String(raw[..<range.lowerBound])
-        let codeString = raw[range.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
-        let code = Int(codeString) ?? -1
+        let text = textRaw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let detectedLanguage = Self.detectedLanguage(from: processOutput.stdout + "\n" + processOutput.stderr) ?? (languageArg == "auto" ? nil : languageArg)
 
-        let bodyData = bodyString.data(using: .utf8) ?? Data()
+        Log.network.info(
+            "Local transcribe ok ms=\(elapsedMs, privacy: .public) lang=\(detectedLanguage ?? "?", privacy: .public) chars=\(text.count, privacy: .public)"
+        )
 
-        if code < 200 || code >= 300 {
-            let message = Self.extractErrorMessage(from: bodyData) ?? bodyString.trimmingCharacters(in: .whitespacesAndNewlines)
-            throw ClientError.httpError(code, message.isEmpty ? "Request failed" : message)
-        }
-
-        return try JSONDecoder().decode(TranscriptionResult.self, from: bodyData)
-    }
-
-    private func makeMultipartBody(boundary: String, fileData: Data, filename: String) -> Data {
-        var data = Data()
-
-        data.appendString("--\(boundary)\r\n")
-        data.appendString("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n")
-        data.appendString("Content-Type: audio/wav\r\n\r\n")
-        data.append(fileData)
-        data.appendString("\r\n")
-        data.appendString("--\(boundary)--\r\n")
-
-        return data
-    }
-
-    private static func extractErrorMessage(from data: Data) -> String? {
-        struct ErrorBody: Decodable { let detail: String? }
-        return (try? JSONDecoder().decode(ErrorBody.self, from: data).detail)
-    }
-
-    private func withTimeout<T: Sendable>(
-        seconds: Double,
-        operation: @escaping @Sendable () async throws -> T
-    ) async throws -> T {
-        let nanos = UInt64(max(0, seconds) * 1_000_000_000)
-        return try await withThrowingTaskGroup(of: T.self) { group in
-            defer { group.cancelAll() }
-
-            group.addTask {
-                try await operation()
-            }
-            group.addTask {
-                try await Task.sleep(nanoseconds: nanos)
-                throw ClientError.timeout
-            }
-
-            guard let first = try await group.next() else {
-                throw ClientError.timeout
-            }
-            return first
-        }
+        return TranscriptionResult(
+            text: text,
+            language: detectedLanguage,
+            language_probability: nil,
+            elapsed_ms: elapsedMs
+        )
     }
 }
 
-private extension Data {
-    mutating func appendString(_ string: String) {
-        if let data = string.data(using: .utf8) {
-            append(data)
+private extension TranscriptionClient {
+    struct ProcessOutput {
+        let stdout: String
+        let stderr: String
+        let exitCode: Int32
+    }
+
+    static func runWhisperProcess(
+        executablePath: String,
+        arguments: [String],
+        timeoutSeconds: Double
+    ) throws -> ProcessOutput {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executablePath)
+        process.arguments = arguments
+
+        let out = Pipe()
+        let err = Pipe()
+        process.standardOutput = out
+        process.standardError = err
+
+        try process.run()
+
+        if timeoutSeconds > 0 {
+            let deadline = Date().addingTimeInterval(timeoutSeconds)
+            while process.isRunning {
+                if Date() >= deadline {
+                    process.terminate()
+                    throw ClientError.timeout
+                }
+                Thread.sleep(forTimeInterval: 0.05)
+            }
         }
+
+        process.waitUntilExit()
+
+        let stdout = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let stderr = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        return ProcessOutput(stdout: stdout, stderr: stderr, exitCode: process.terminationStatus)
+    }
+
+    static func resolveWhisperExecutable(configuredPath: String) -> String? {
+        let configured = configuredPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !configured.isEmpty {
+            let expanded = expandPath(configured)
+            if FileManager.default.isExecutableFile(atPath: expanded) {
+                return expanded
+            }
+            if !expanded.contains("/"), let found = which(expanded) {
+                return found
+            }
+        }
+
+        if let bundled = Bundle.main.resourceURL?.appendingPathComponent("whisper-cli").path,
+           FileManager.default.isExecutableFile(atPath: bundled)
+        {
+            return bundled
+        }
+        if let bundled = Bundle.main.resourceURL?.appendingPathComponent("main").path,
+           FileManager.default.isExecutableFile(atPath: bundled)
+        {
+            return bundled
+        }
+        let commonPaths = [
+            "/opt/homebrew/bin/whisper-cli",
+            "/usr/local/bin/whisper-cli",
+            "/opt/homebrew/bin/main",
+            "/usr/local/bin/main",
+        ]
+        for path in commonPaths where FileManager.default.isExecutableFile(atPath: path) {
+            return path
+        }
+        if let found = which("whisper-cli") {
+            return found
+        }
+        if let found = which("main") {
+            return found
+        }
+        return nil
+    }
+
+    static func normalizeLanguage(_ language: String?) -> String {
+        let code = (language ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return code.isEmpty ? "auto" : code
+    }
+
+    static func detectedLanguage(from output: String) -> String? {
+        let patterns = [
+            #"auto[- ]detected language:\s*([A-Za-z-]+)"#,
+            #"language:\s*([A-Za-z-]+)"#,
+        ]
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { continue }
+            let ns = NSRange(output.startIndex..<output.endIndex, in: output)
+            guard let match = regex.firstMatch(in: output, options: [], range: ns), match.numberOfRanges > 1 else { continue }
+            guard let range = Range(match.range(at: 1), in: output) else { continue }
+            let lang = String(output[range]).lowercased()
+            if !lang.isEmpty {
+                return lang
+            }
+        }
+        return nil
+    }
+
+    static func which(_ executable: String) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
+        process.arguments = [executable]
+
+        let out = Pipe()
+        process.standardOutput = out
+        process.standardError = Pipe()
+
+        guard (try? process.run()) != nil else { return nil }
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+
+        let value = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let value, !value.isEmpty else { return nil }
+        return value
+    }
+
+    static func expandPath(_ path: String) -> String {
+        NSString(string: path).expandingTildeInPath
     }
 }
