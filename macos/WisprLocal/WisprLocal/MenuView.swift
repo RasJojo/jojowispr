@@ -5,15 +5,27 @@ struct MenuView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Button(model.dictation.isRecording ? "Stop Dictation" : "Start Dictation") {
+            Button(model.dictation.isRecordingMicDictation ? "Stop Dictation" : "Start Dictation") {
                 Task { @MainActor in
-                    if model.dictation.isRecording {
+                    if model.dictation.isRecordingMicDictation {
                         await model.dictation.stopRecordingAndTranscribe(trigger: .menu)
-                    } else {
+                    } else if !model.dictation.isRecording {
                         model.dictation.startRecording(trigger: .menu)
                     }
                 }
             }
+            .disabled(model.dictation.isRecordingMeetingCapture)
+
+            Button(model.dictation.isRecordingMeetingCapture ? "Stop Meeting Capture" : "Start Meeting Capture") {
+                Task { @MainActor in
+                    if model.dictation.isRecordingMeetingCapture {
+                        await model.dictation.stopRecordingAndTranscribe(trigger: .meetingMenu)
+                    } else if !model.dictation.isRecording {
+                        model.dictation.startMeetingCapture(trigger: .meetingMenu)
+                    }
+                }
+            }
+            .disabled(model.dictation.isRecordingMicDictation)
 
             Divider()
 

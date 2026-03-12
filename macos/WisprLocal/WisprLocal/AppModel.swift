@@ -40,21 +40,33 @@ final class AppModel: ObservableObject {
         hotkeys.onTogglePressed = { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
-                if self.dictation.isRecording {
+                if self.dictation.isRecordingMicDictation {
                     await self.dictation.stopRecordingAndTranscribe(trigger: .toggleHotkey)
-                } else {
+                } else if !self.dictation.isRecording {
                     self.dictation.startRecording(trigger: .toggleHotkey)
+                }
+            }
+        }
+
+        hotkeys.onMeetingTogglePressed = { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                if self.dictation.isRecordingMeetingCapture {
+                    await self.dictation.stopRecordingAndTranscribe(trigger: .meetingHotkey)
+                } else if !self.dictation.isRecording {
+                    self.dictation.startMeetingCapture(trigger: .meetingHotkey)
                 }
             }
         }
 
         hotkeys.register(
             hold: settings.holdHotkey,
-            toggle: settings.toggleHotkey
+            toggle: settings.toggleHotkey,
+            meeting: settings.meetingHotkey
         )
 
-        settings.onHotkeysChanged = { [weak self] hold, toggle in
-            self?.hotkeys.register(hold: hold, toggle: toggle)
+        settings.onHotkeysChanged = { [weak self] hold, toggle, meeting in
+            self?.hotkeys.register(hold: hold, toggle: toggle, meeting: meeting)
         }
 
         // If a previously saved path is stale (e.g. after app updates), fall back to current preferred model.

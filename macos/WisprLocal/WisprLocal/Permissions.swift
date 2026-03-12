@@ -30,6 +30,21 @@ enum Permissions {
         }
     }
 
+    static func isScreenRecordingGranted() -> Bool {
+        CGPreflightScreenCaptureAccess()
+    }
+
+    @MainActor
+    static func requestScreenRecordingIfNeeded() -> Bool {
+        if isScreenRecordingGranted() {
+            Log.permissions.info("Screen recording: already granted")
+            return true
+        }
+        let granted = CGRequestScreenCaptureAccess()
+        Log.permissions.info("Screen recording: request result granted=\(granted)")
+        return granted
+    }
+
     @MainActor
     static func requestAccessibilityIfNeeded() -> Bool {
         if isAccessibilityTrusted() {

@@ -5,9 +5,11 @@ final class HotKeyManager {
     var onHoldPressed: (() -> Void)?
     var onHoldReleased: (() -> Void)?
     var onTogglePressed: (() -> Void)?
+    var onMeetingTogglePressed: (() -> Void)?
 
     private var holdRef: EventHotKeyRef?
     private var toggleRef: EventHotKeyRef?
+    private var meetingRef: EventHotKeyRef?
     private var handlerRef: EventHandlerRef?
 
     init() {
@@ -21,10 +23,12 @@ final class HotKeyManager {
         }
     }
 
-    func register(hold: HotkeyConfig, toggle: HotkeyConfig) {
+    func register(hold: HotkeyConfig, toggle: HotkeyConfig, meeting: HotkeyConfig) {
         unregisterAll()
 
-        Log.hotkeys.info("Registering hotkeys hold(keyCode=\(hold.keyCode), mods=\(hold.modifiers)) toggle(keyCode=\(toggle.keyCode), mods=\(toggle.modifiers))")
+        Log.hotkeys.info(
+            "Registering hotkeys hold(keyCode=\(hold.keyCode), mods=\(hold.modifiers)) toggle(keyCode=\(toggle.keyCode), mods=\(toggle.modifiers)) meeting(keyCode=\(meeting.keyCode), mods=\(meeting.modifiers))"
+        )
 
         var eventHotKeyID = EventHotKeyID(signature: OSType(0x57535052) /* 'WSPR' */, id: 1)
         RegisterEventHotKey(
@@ -45,6 +49,16 @@ final class HotKeyManager {
             0,
             &toggleRef
         )
+
+        eventHotKeyID = EventHotKeyID(signature: OSType(0x57535052) /* 'WSPR' */, id: 3)
+        RegisterEventHotKey(
+            meeting.keyCode,
+            meeting.modifiers,
+            eventHotKeyID,
+            GetApplicationEventTarget(),
+            0,
+            &meetingRef
+        )
     }
 
     private func unregisterAll() {
@@ -55,6 +69,10 @@ final class HotKeyManager {
         if let toggleRef {
             UnregisterEventHotKey(toggleRef)
             self.toggleRef = nil
+        }
+        if let meetingRef {
+            UnregisterEventHotKey(meetingRef)
+            self.meetingRef = nil
         }
     }
 
@@ -104,6 +122,10 @@ final class HotKeyManager {
         case 2:
             if kind == UInt32(kEventHotKeyPressed) {
                 manager.onTogglePressed?()
+            }
+        case 3:
+            if kind == UInt32(kEventHotKeyPressed) {
+                manager.onMeetingTogglePressed?()
             }
         default:
             break

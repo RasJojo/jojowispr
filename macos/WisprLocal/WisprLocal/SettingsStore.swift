@@ -3,7 +3,7 @@ import Foundation
 
 @MainActor
 final class SettingsStore: ObservableObject {
-    var onHotkeysChanged: ((HotkeyConfig, HotkeyConfig) -> Void)?
+    var onHotkeysChanged: ((HotkeyConfig, HotkeyConfig, HotkeyConfig) -> Void)?
 
     // Updated by DictationController (not persisted).
     @Published var lastMetrics: DictationMetrics?
@@ -30,6 +30,10 @@ final class SettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(pauseMediaWhileDictating, forKey: Keys.pauseMediaWhileDictating) }
     }
 
+    @Published var includeMicrophoneInMeetingCapture: Bool {
+        didSet { UserDefaults.standard.set(includeMicrophoneInMeetingCapture, forKey: Keys.includeMicrophoneInMeetingCapture) }
+    }
+
     @Published var playSounds: Bool {
         didSet { UserDefaults.standard.set(playSounds, forKey: Keys.playSounds) }
     }
@@ -45,14 +49,21 @@ final class SettingsStore: ObservableObject {
     @Published var holdHotkey: HotkeyConfig {
         didSet {
             persist(hotkey: holdHotkey, prefix: Keys.holdPrefix)
-            onHotkeysChanged?(holdHotkey, toggleHotkey)
+            onHotkeysChanged?(holdHotkey, toggleHotkey, meetingHotkey)
         }
     }
 
     @Published var toggleHotkey: HotkeyConfig {
         didSet {
             persist(hotkey: toggleHotkey, prefix: Keys.togglePrefix)
-            onHotkeysChanged?(holdHotkey, toggleHotkey)
+            onHotkeysChanged?(holdHotkey, toggleHotkey, meetingHotkey)
+        }
+    }
+
+    @Published var meetingHotkey: HotkeyConfig {
+        didSet {
+            persist(hotkey: meetingHotkey, prefix: Keys.meetingPrefix)
+            onHotkeysChanged?(holdHotkey, toggleHotkey, meetingHotkey)
         }
     }
 
@@ -64,6 +75,7 @@ final class SettingsStore: ObservableObject {
         self.transcriptionTimeoutSeconds = defaults.object(forKey: Keys.transcriptionTimeoutSeconds) as? Double ?? 90
         self.language = defaults.string(forKey: Keys.language) ?? ""
         self.pauseMediaWhileDictating = defaults.object(forKey: Keys.pauseMediaWhileDictating) as? Bool ?? true
+        self.includeMicrophoneInMeetingCapture = defaults.object(forKey: Keys.includeMicrophoneInMeetingCapture) as? Bool ?? true
         self.playSounds = defaults.object(forKey: Keys.playSounds) as? Bool ?? true
         self.smartFormatting = defaults.object(forKey: Keys.smartFormatting) as? Bool ?? true
         if
@@ -82,6 +94,10 @@ final class SettingsStore: ObservableObject {
         self.toggleHotkey = SettingsStore.loadHotkey(
             prefix: Keys.togglePrefix,
             fallback: .init(keyCode: UInt32(kVK_Space), modifiers: UInt32(optionKey | shiftKey))
+        )
+        self.meetingHotkey = SettingsStore.loadHotkey(
+            prefix: Keys.meetingPrefix,
+            fallback: .init(keyCode: UInt32(kVK_Space), modifiers: UInt32(optionKey | controlKey))
         )
     }
 
@@ -108,12 +124,14 @@ final class SettingsStore: ObservableObject {
         static let transcriptionTimeoutSeconds = "wispr.transcription_timeout_s"
         static let language = "wispr.language"
         static let pauseMediaWhileDictating = "wispr.pause_media"
+        static let includeMicrophoneInMeetingCapture = "wispr.meeting.include_microphone"
         static let playSounds = "wispr.play_sounds"
         static let smartFormatting = "wispr.smart_formatting"
         static let insertionMode = "wispr.insertion_mode"
 
         static let holdPrefix = "wispr.hotkey.hold."
         static let togglePrefix = "wispr.hotkey.toggle."
+        static let meetingPrefix = "wispr.hotkey.meeting."
     }
 }
 

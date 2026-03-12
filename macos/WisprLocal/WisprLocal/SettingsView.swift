@@ -66,7 +66,16 @@ struct SettingsView: View {
             Section("Hotkeys") {
                 HotkeyRecorderRow(title: "Hold-to-talk", hotkey: $settings.holdHotkey)
                 HotkeyRecorderRow(title: "Toggle dictation", hotkey: $settings.toggleHotkey)
-                Text("Hold: press to start recording, release to transcribe.\nToggle: press once to start, press again to stop.")
+                HotkeyRecorderRow(title: "Toggle meeting capture", hotkey: $settings.meetingHotkey)
+                Text("Hold: press to start recording, release to transcribe.\nToggle dictation: start/stop microphone dictation.\nToggle meeting capture: start/stop system audio capture (with optional microphone).")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Meeting Capture") {
+                Toggle("Include microphone while capturing system audio", isOn: $settings.includeMicrophoneInMeetingCapture)
+
+                Text("Captures live audio from your Mac (calls, videos, streams). Some DRM-protected apps may block capture.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
@@ -93,6 +102,9 @@ struct SettingsView: View {
                     Button("Request Microphone") {
                         Task { _ = await Permissions.requestMicrophoneIfNeeded() }
                     }
+                    Button("Request Screen Recording") {
+                        _ = Permissions.requestScreenRecordingIfNeeded()
+                    }
                     Button("Request Accessibility") {
                         _ = Permissions.requestAccessibilityIfNeeded()
                     }
@@ -104,6 +116,14 @@ struct SettingsView: View {
                 }
 
                 Text("Accessibility is required to insert text into other apps.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+
+                Text("Screen Recording is required for system audio capture.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+
+                Text("Screen Recording status: \(Permissions.isScreenRecordingGranted() ? "Granted" : "Not granted")")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
 
