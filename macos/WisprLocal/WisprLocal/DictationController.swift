@@ -189,7 +189,9 @@ final class DictationController: ObservableObject {
                 modelPath: settings.modelPath,
                 whisperBinaryPath: settings.whisperBinaryPath,
                 language: settings.language.isEmpty ? nil : settings.language,
-                timeoutSeconds: settings.transcriptionTimeoutSeconds
+                timeoutSeconds: settings.transcriptionTimeoutSeconds,
+                keepModelWarmBetweenTranscriptions: settings.keepModelWarmBetweenTranscriptions,
+                modelWarmIdleSleepSeconds: settings.modelWarmIdleSleepSeconds
             )
             let requestMs = Int((CFAbsoluteTimeGetCurrent() - requestStarted) * 1000)
             let totalMs = lastStopRecorderMs + requestMs

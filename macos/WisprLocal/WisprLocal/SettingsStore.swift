@@ -21,6 +21,28 @@ final class SettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(transcriptionTimeoutSeconds, forKey: Keys.transcriptionTimeoutSeconds) }
     }
 
+    @Published var keepModelWarmBetweenTranscriptions: Bool {
+        didSet {
+            UserDefaults.standard.set(keepModelWarmBetweenTranscriptions, forKey: Keys.keepModelWarmBetweenTranscriptions)
+            if !keepModelWarmBetweenTranscriptions {
+                Task {
+                    await TranscriptionClient.shutdownWarmServer()
+                }
+            }
+        }
+    }
+
+    @Published var modelWarmIdleSleepSeconds: Double {
+        didSet {
+            let clamped = max(30, min(3600, modelWarmIdleSleepSeconds))
+            if clamped != modelWarmIdleSleepSeconds {
+                modelWarmIdleSleepSeconds = clamped
+                return
+            }
+            UserDefaults.standard.set(modelWarmIdleSleepSeconds, forKey: Keys.modelWarmIdleSleepSeconds)
+        }
+    }
+
     /// Empty string = auto
     @Published var language: String {
         didSet { UserDefaults.standard.set(language, forKey: Keys.language) }
@@ -73,6 +95,8 @@ final class SettingsStore: ObservableObject {
         self.modelPath = defaults.string(forKey: Keys.modelPath) ?? TranscriptionClient.preferredModelPath()
         self.whisperBinaryPath = defaults.string(forKey: Keys.whisperBinaryPath) ?? ""
         self.transcriptionTimeoutSeconds = defaults.object(forKey: Keys.transcriptionTimeoutSeconds) as? Double ?? 90
+        self.keepModelWarmBetweenTranscriptions = defaults.object(forKey: Keys.keepModelWarmBetweenTranscriptions) as? Bool ?? true
+        self.modelWarmIdleSleepSeconds = defaults.object(forKey: Keys.modelWarmIdleSleepSeconds) as? Double ?? 300
         self.language = defaults.string(forKey: Keys.language) ?? ""
         self.pauseMediaWhileDictating = defaults.object(forKey: Keys.pauseMediaWhileDictating) as? Bool ?? true
         self.includeMicrophoneInMeetingCapture = defaults.object(forKey: Keys.includeMicrophoneInMeetingCapture) as? Bool ?? true
@@ -122,6 +146,8 @@ final class SettingsStore: ObservableObject {
         static let modelPath = "wispr.local_model_path"
         static let whisperBinaryPath = "wispr.whisper_binary_path"
         static let transcriptionTimeoutSeconds = "wispr.transcription_timeout_s"
+        static let keepModelWarmBetweenTranscriptions = "wispr.keep_model_warm"
+        static let modelWarmIdleSleepSeconds = "wispr.model_warm_idle_sleep_s"
         static let language = "wispr.language"
         static let pauseMediaWhileDictating = "wispr.pause_media"
         static let includeMicrophoneInMeetingCapture = "wispr.meeting.include_microphone"

@@ -28,6 +28,16 @@ struct SettingsView: View {
                     Spacer()
                 }
 
+                Toggle("Keep model warm between transcriptions", isOn: $settings.keepModelWarmBetweenTranscriptions)
+
+                HStack {
+                    Stepper(value: $settings.modelWarmIdleSleepSeconds, in: 30...3600, step: 30) {
+                        Text("Auto-sleep after \(Int(settings.modelWarmIdleSleepSeconds))s idle")
+                    }
+                    Spacer()
+                }
+                .disabled(!settings.keepModelWarmBetweenTranscriptions)
+
                 HStack {
                     Button("Use Defaults") {
                         settings.modelPath = TranscriptionClient.preferredModelPath()
@@ -59,6 +69,10 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
 
                 Text("Binary lookup order: custom path, bundled whisper-cli, then PATH.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+
+                Text("Warm mode keeps a local whisper-server process in memory and stops it automatically after inactivity.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
